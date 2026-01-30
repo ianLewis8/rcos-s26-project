@@ -32,6 +32,8 @@ transform = Transform3D(1, 0, 0, 0, 0.7071068, 0.7071068, 0, -0.7071068, 0.70710
 [node name="Player" parent="." unique_id=1771048706 instance=ExtResource("1_3mqji")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 
-[node name="Camera3D" type="Camera3D" parent="Player" unique_id=346290755]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-fov = 160.3125
+[node name="cameraPivot" type="Marker3D" parent="Player" unique_id=820492082]
+
+[node name="Camera3D" type="Camera3D" parent="Player/cameraPivot" unique_id=743684132]
+transform = Transform3D(-4.222196e-08, -0.25881904, 0.9659258, -1.131334e-08, 0.9659258, 0.25881904, -1, 0, -4.371139e-08, 5, 2, 0)
+fov = 86.8949
