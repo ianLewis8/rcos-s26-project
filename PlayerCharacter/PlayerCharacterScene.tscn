@@ -18,6 +18,8 @@
 [ext_resource type="LabelSettings" uid="uid://sescerp70o6b" path="res://addons/Arts/Fonts/LabelFontSettings.tres" id="17_c1i0s"]
 [ext_resource type="Script" uid="uid://d2tif6xsjkwnw" path="res://PlayerCharacter/StateMachine/ragdoll_state_script.gd" id="17_pdxi8"]
 [ext_resource type="Script" uid="uid://chnbi4s1tf7pa" path="res://PlayerCharacter/Debug/DebugHUDScript.gd" id="17_qmq2g"]
+[ext_resource type="Script" uid="uid://k72i4psbchtv" path="res://ui/health_bar.gd" id="19_n0ydc"]
+[ext_resource type="Script" uid="uid://diasmms0w51ia" path="res://enemy/health_system.gd" id="20_0teac"]
 
 [sub_resource type="Curve" id="Curve_l1d2p"]
 _limits = [0.0, 10.0, 0.0, 1.0]
@@ -86,6 +88,28 @@ streams_count = 1
 stream_0/stream = ExtResource("8_s241m")
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_xhngq"]
+
+[sub_resource type="Gradient" id="Gradient_0teac"]
+offsets = PackedFloat32Array(0.8045198, 0.8745763)
+colors = PackedColorArray(0.24, 0.24, 0.24, 1, 0, 0, 0, 1)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_mebcp"]
+gradient = SubResource("Gradient_0teac")
+width = 256
+height = 28
+fill_from = Vector2(0, 1)
+fill_to = Vector2(0, 1)
+
+[sub_resource type="Gradient" id="Gradient_5qbu3"]
+offsets = PackedFloat32Array(0, 0.002259887, 1)
+colors = PackedColorArray(0, 0, 0, 1, 0.35, 0, 0, 1, 0.35, 0, 0, 1)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_1uovs"]
+gradient = SubResource("Gradient_5qbu3")
+width = 256
+height = 28
+fill_from = Vector2(1, 1)
+fill_to = Vector2(0.5470086, 0.47008547)
 
 [node name="Player" type="CharacterBody3D" unique_id=1164001717]
 collision_mask = 2
@@ -202,6 +226,7 @@ collision_mask = 2
 
 [node name="DebugHUD" type="CanvasLayer" parent="." unique_id=1035836896]
 unique_name_in_owner = true
+visible = false
 script = ExtResource("17_qmq2g")
 
 [node name="HBoxContainer" type="HBoxContainer" parent="DebugHUD" unique_id=1768912201]
@@ -315,3 +340,30 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "....."
 label_settings = ExtResource("17_c1i0s")
+
+[node name="GUI" type="CanvasLayer" parent="." unique_id=763805944]
+
+[node name="Control" type="Control" parent="GUI" unique_id=431688856]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="MarginContainer" type="MarginContainer" parent="GUI/Control" unique_id=103293537]
+layout_mode = 0
+offset_right = 314.0
+offset_bottom = 65.0
+
+[node name="HealthBar" type="TextureProgressBar" parent="GUI/Control/MarginContainer" unique_id=541958200 node_paths=PackedStringArray("health_system")]
+layout_mode = 2
+size_flags_horizontal = 8
+size_flags_vertical = 8
+texture_under = SubResource("GradientTexture2D_mebcp")
+texture_progress = SubResource("GradientTexture2D_1uovs")
+script = ExtResource("19_n0ydc")
+health_system = NodePath("../../../../HealthSystem")
+metadata/_custom_type_script = "uid://k72i4psbchtv"
+
+[node name="HealthSystem" type="Node" parent="." unique_id=635001675]
+script = ExtResource("20_0teac")
+metadata/_custom_type_script = "uid://diasmms0w51ia"
