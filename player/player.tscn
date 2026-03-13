@@ -1,0 +1,1087 @@
+[gd_scene format=3 uid="uid://c3rygyfthymkn"]
+
+[ext_resource type="AudioStream" uid="uid://b7q12qmsksbc7" path="res://addons/Arts/Sounds/footstep_concrete_000.ogg" id="1_rgyib"]
+[ext_resource type="AudioStream" uid="uid://c6unhc5lontfn" path="res://addons/Arts/Sounds/footstep_concrete_001.ogg" id="2_hg6s5"]
+[ext_resource type="AudioStream" uid="uid://byg4lkp3ws8kt" path="res://addons/Arts/Sounds/footstep_concrete_002.ogg" id="3_8t03j"]
+[ext_resource type="AudioStream" uid="uid://bly24bd3apvev" path="res://addons/Arts/Sounds/jingles_SAX15.ogg" id="4_2ieo8"]
+[ext_resource type="PackedScene" uid="uid://c0b71d2b1hdp6" path="res://cameras/OrbitControl/orbit_view.tscn" id="5_ebec5"]
+[ext_resource type="LabelSettings" uid="uid://sescerp70o6b" path="res://addons/Arts/Fonts/LabelFontSettings.tres" id="6_yllr7"]
+[ext_resource type="Script" uid="uid://k72i4psbchtv" path="res://ui/health_bar.gd" id="7_kb6p2"]
+[ext_resource type="Script" uid="uid://diasmms0w51ia" path="res://enemy/health_system.gd" id="8_wodsf"]
+
+[sub_resource type="GDScript" id="GDScript_32hag"]
+script/source = "extends CharacterBody3D
+
+#movement variables
+var move_speed : float
+var move_accel : float
+var move_deccel : float
+var move_dir : Vector2
+var target_angle : float
+var last_input_dir : Vector2
+var last_frame_position : Vector3
+var last_frame_velocity : Vector3
+var was_on_floor : bool = false
+var walk_or_run : String = \"WalkState\" #keep in memory if play char was walking or running before being in the air
+
+@export_group(\"Walk variables\")
+@export var walk_speed : float
+@export var walk_accel : float
+@export var walk_deccel : float
+
+@export_group(\"Run variables\")
+@export var run_speed : float
+@export var run_accel : float
+@export var run_deccel : float
+@export var continious_run : bool = false #if true, doesn't need to keep run button on to run
+
+@export_group(\"Jump variables\")
+@export var jump_height : float
+@export var jump_time_to_peak : float
+@export var jump_time_to_descent : float
+@onready var jump_velocity : float = ((2.0 * jump_height) / jump_time_to_peak) * -1.0
+var has_cut_jump : bool = false
+@export var jump_cut_multiplier : float
+@export var jump_cooldown : float
+var jump_cooldown_ref : float 
+@export var nb_jumps_in_air_allowed : int 
+var nb_jumps_in_air_allowed_ref : int
+var jump_buff_on : bool = false
+var buffered_jump : bool = false
+@export var coyote_jump_cooldown : float
+var coyote_jump_cooldown_ref : float
+var coyote_jump_on : bool = false
+@export var auto_jump : bool = false
+ 
+@export_group(\"In air variables\")
+@export var in_air_move_speed : Array[Curve]
+@export var in_air_accel : Array[Curve]
+@export var hit_wall_cut_velocity : bool = false
+
+#gravity variables
+@onready var jump_gravity : float = ((-2.0 * jump_height) / (jump_time_to_peak * jump_time_to_peak)) * -1.0
+@onready var fall_gravity : float = ((-2.0 * jump_height) / (jump_time_to_descent * jump_time_to_descent)) * -1.0
+
+@export_group(\"Keybinding variables\")
+@export var moveForwardAction : String = \"\"
+@export var moveBackwardAction : String = \"\"
+@export var moveLeftAction : String = \"\"
+@export var moveRightAction : String = \"\"
+@export var runAction : String = \"\"
+@export var jumpAction : String = \"\"
+
+@export_group(\"Model variables\")
+@export var model_rot_speed : float
+@export var ragdoll_gravity : float
+@export var ragdoll_on_floor_only : bool = false
+@export var follow_cam_pos_when_aimed : bool = false
+
+#references variables
+@onready var visual_root = %VisualRoot
+@onready var godot_plush_skin = %GodotPlushSkin
+@onready var particles_manager = %ParticlesManager
+@onready var cam_holder = $OrbitView
+@onready var state_machine = $StateMachine
+@onready var debug_hud = %DebugHUD
+@onready var foot_step_audio = %FootStepAudio
+@onready var impact_audio = %ImpactAudio
+@onready var wave_audio = %WaveAudio
+@onready var collision_shape_3d = %CollisionShape3D
+@onready var floor_check : RayCast3D = %FloorRaycast
+
+#particles variables
+@onready var movement_dust = %MovementDust
+@onready var jump_particles = preload(\"res://PlayerCharacter/Vfx/jump_particles.tscn\")
+@onready var land_particles = preload(\"res://PlayerCharacter/Vfx/land_particles.tscn\")
+
+func _ready():
+	#set move variables, and value references
+	move_speed = walk_speed
+	move_accel = walk_accel
+	move_deccel = walk_deccel
+	
+	jump_cooldown_ref = jump_cooldown
+	nb_jumps_in_air_allowed_ref = nb_jumps_in_air_allowed
+	coyote_jump_cooldown_ref = coyote_jump_cooldown
+	
+	#set char model audios effects
+	godot_plush_skin.footstep.connect(func(intensity : float = 1.0):
+		foot_step_audio.volume_db = linear_to_db(intensity)
+		foot_step_audio.play()
+		)
+		
+func _process(delta: float):
+	modify_model_orientation(delta)
+	
+	display_properties()
+	
+func _physics_process(_delta : float):
+	modify_physics_properties()
+	
+	move_and_slide()
+	
+func display_properties():
+	#display play char properties
+	debug_hud.display_curr_state(state_machine.curr_state_name)
+	debug_hud.display_velocity(velocity.length())
+	debug_hud.display_nb_jumps_in_air_allowed(nb_jumps_in_air_allowed)
+	debug_hud.display_jump_buffer(jump_buff_on)
+	debug_hud.display_coyote_time(coyote_jump_cooldown)
+	debug_hud.display_model_orientation(cam_holder.cam_aimed and follow_cam_pos_when_aimed)
+	debug_hud.display_camera_mode(cam_holder.cam_aimed)
+	
+func modify_model_orientation(delta : float):
+	#manage the model rotation depending on the camera mode + char parameters
+	
+	var dir_target_angle : float
+	
+	#follow mode (model must follow the camera rotation)
+	#if the cam is in angled/aim mode
+	if cam_holder.cam_aimed and follow_cam_pos_when_aimed and !godot_plush_skin.ragdoll:
+		#get cam rotation on the y axis (+ PI to invert half circle, and be sure that the model is correctly oriented)
+		dir_target_angle = (cam_holder.cam.global_rotation.y) + PI
+		#rotate the model on the y axis
+		visual_root.rotation.y = rotate_toward(visual_root.rotation.y, dir_target_angle, model_rot_speed * delta)
+	
+	#free mode (the model orientation is independant to the camera one)
+	if (!cam_holder.cam_aimed or !follow_cam_pos_when_aimed) and move_dir != Vector2.ZERO:
+		#get char move direction
+		dir_target_angle = -move_dir.orthogonal().angle()
+		#rotate the model on the y axis
+		visual_root.rotation.y = rotate_toward(visual_root.rotation.y, dir_target_angle, model_rot_speed * delta)
+		
+func modify_physics_properties():
+	last_frame_position = position #get play char position every frame
+	last_frame_velocity = velocity #get play char velocity every frame
+	was_on_floor = !is_on_floor() #get if play char is on floor or not
+	
+func gravity_apply(delta : float):
+	#if play char goes up, apply jump gravity
+	#otherwise, apply fall gravity
+	if velocity.y >= 0.0: velocity.y -= jump_gravity * delta
+	elif velocity.y < 0.0: velocity.y -= fall_gravity * delta
+	
+func squash_and_strech(value : float, timing : float):
+	#create a tween that simulate a compression of the model (squash and strech ones)
+	#maily used to accentuate game feel/juice
+	#call the squash_and_strech function of the model (it's this function that actually squash and strech the model)
+	var sasTween : Tween = create_tween()
+	sasTween.set_ease(Tween.EASE_OUT)
+	sasTween.tween_property(godot_plush_skin, \"squash_and_stretch\", value, timing)
+	sasTween.tween_property(godot_plush_skin, \"squash_and_stretch\", 1.0, timing * 1.8)
+	
+	
+	
+	
+	
+	
+"
+
+[sub_resource type="Curve" id="Curve_l1d2p"]
+_limits = [0.0, 10.0, 0.0, 1.0]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(0.654804, 2.56598), 0.0, 0.0, 0, 0, Vector2(1, 6.66422), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Curve" id="Curve_pdxi8"]
+_limits = [0.0, 10.0, 0.0, 1.0]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(1, 10), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Curve" id="Curve_8rpwc"]
+_limits = [0.0, 10.0, 0.0, 1.0]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(0.644128, 3.04252), 0.0, 0.0, 0, 0, Vector2(1, 6.56892), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Curve" id="Curve_x3fw6"]
+_limits = [0.0, 10.0, 0.0, 1.0]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(1, 10), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="AudioStreamRandomizer" id="AudioStreamRandomizer_sxclc"]
+random_pitch = 1.2
+streams_count = 3
+stream_0/stream = ExtResource("1_rgyib")
+stream_1/stream = ExtResource("2_hg6s5")
+stream_2/stream = ExtResource("3_8t03j")
+
+[sub_resource type="AudioStreamRandomizer" id="AudioStreamRandomizer_3vpnr"]
+random_pitch = 1.2
+streams_count = 3
+stream_0/stream = ExtResource("1_rgyib")
+stream_1/stream = ExtResource("2_hg6s5")
+stream_2/stream = ExtResource("3_8t03j")
+
+[sub_resource type="AudioStreamRandomizer" id="AudioStreamRandomizer_fvg16"]
+random_pitch = 1.2
+streams_count = 1
+stream_0/stream = ExtResource("4_2ieo8")
+
+[sub_resource type="GDScript" id="GDScript_tqiix"]
+script/source = "extends Node
+
+@export var initial_state : State
+
+var curr_state : State
+var curr_state_name  : String
+var states : Dictionary = {}
+
+@onready var char_ref : CharacterBody3D = $\"..\"
+
+func _ready():
+	#get all the state childrens
+	for child in get_children():
+		if child is State:
+			states[child.name.to_lower()] = child
+			child.transitioned.connect(on_state_child_transition)
+			
+	#if initial state, transition to it
+	if initial_state:
+		await get_tree().create_timer(0.1).timeout
+		initial_state.enter(char_ref)
+		curr_state = initial_state
+		curr_state_name = curr_state.state_name
+		
+func _process(delta : float):
+	if curr_state: curr_state.update(delta)
+	
+func _physics_process(delta: float):
+	if curr_state: curr_state.physics_update(delta)
+	
+func on_state_child_transition(state : State, new_state_name : String):
+	#manage the transition from one state to another
+	
+	if state != curr_state: return
+	
+	var new_state = states.get(new_state_name.to_lower())
+	if !new_state: return
+	
+	#exit the current state
+	if curr_state: curr_state.exit()
+	
+	#enter the new state
+	new_state.enter(char_ref)
+	
+	curr_state = new_state
+	curr_state_name = curr_state.state_name
+"
+
+[sub_resource type="GDScript" id="GDScript_e7oew"]
+script/source = "extends State
+
+class_name IdleState
+
+var state_name : String = \"Idle\"
+
+var cR : CharacterBody3D
+
+func enter(char_ref : CharacterBody3D):
+	#pass play char reference
+	cR = char_ref
+	
+	verifications()
+	
+func verifications():
+	#manage the appliements that need to be set at the start of the state
+	cR.godot_plush_skin.set_state(\"idle\")
+	cR.floor_snap_length = 1.0
+	if cR.jump_cooldown > 0.0: cR.jump_cooldown = -1.0
+	if cR.nb_jumps_in_air_allowed < cR.nb_jumps_in_air_allowed_ref: cR.nb_jumps_in_air_allowed = cR.nb_jumps_in_air_allowed_ref
+	if cR.coyote_jump_cooldown < cR.coyote_jump_cooldown_ref: cR.coyote_jump_cooldown = cR.coyote_jump_cooldown_ref
+	if cR.has_cut_jump: cR.has_cut_jump = false
+	if cR.movement_dust.emitting: cR.movement_dust.emitting = false
+	
+func update(_delta : float):
+	pass
+	
+func physics_update(delta : float):
+	check_if_floor()
+	
+	cR.gravity_apply(delta)
+	
+	input_management()
+	
+	move(delta)
+	
+func check_if_floor():
+	#manage the appliements and state transitions that needs to be sets/checked/performed
+	#every time the play char pass through one of the following : floor-inair-onwall
+	if !cR.is_on_floor() and !cR.is_on_wall():
+		transitioned.emit(self, \"InairState\")
+	if cR.is_on_floor():
+		if cR.jump_buff_on: 
+			cR.buffered_jump = true
+			cR.jump_buff_on = false
+			transitioned.emit(self, \"JumpState\")
+			
+func input_management():
+	#manage the state transitions depending on the actions inputs
+	if Input.is_action_pressed(cR.jumpAction) if cR.auto_jump else Input.is_action_just_pressed(cR.jumpAction) :
+		transitioned.emit(self, \"JumpState\")
+		
+	if Input.is_action_just_pressed(cR.runAction):
+		if cR.walk_or_run == \"WalkState\": cR.walk_or_run = \"RunState\"
+		elif cR.walk_or_run == \"RunState\": cR.walk_or_run = \"WalkState\"
+		
+	#if Input.is_action_just_pressed(\"ragdoll\"):
+	#	if !cR.godot_plush_skin.ragdoll:
+	#		transitioned.emit(self, \"RagdollState\")
+		
+func move(delta : float):
+	#manage the character movement
+	
+	#get the move direction depending on the input
+	cR.move_dir = Input.get_vector(cR.moveLeftAction, cR.moveRightAction, cR.moveForwardAction, cR.moveBackwardAction).rotated(-cR.cam_holder.global_rotation.y)
+	
+	if cR.move_dir and cR.is_on_floor():
+		#transition to corresponding state
+		transitioned.emit(self, cR.walk_or_run)
+	else:
+		#apply smooth stop 
+		cR.velocity.x = lerp(cR.velocity.x, 0.0, cR.move_deccel * delta)
+		cR.velocity.z = lerp(cR.velocity.z, 0.0, cR.move_deccel * delta)
+"
+
+[sub_resource type="GDScript" id="GDScript_c35mf"]
+script/source = "extends State
+
+class_name WalkState
+
+var state_name : String = \"Walk\"
+
+var cR : CharacterBody3D
+
+func enter(char_ref : CharacterBody3D):
+	cR = char_ref
+	
+	verifications()
+	
+func verifications():
+	cR.godot_plush_skin.set_state(\"walk\")
+	cR.move_speed = cR.walk_speed
+	cR.move_accel = cR.walk_accel
+	cR.move_deccel = cR.walk_deccel
+	
+	cR.floor_snap_length = 1.0
+	if cR.jump_cooldown > 0.0: cR.jump_cooldown = -1.0
+	if cR.nb_jumps_in_air_allowed < cR.nb_jumps_in_air_allowed_ref: cR.nb_jumps_in_air_allowed = cR.nb_jumps_in_air_allowed_ref
+	if cR.coyote_jump_cooldown < cR.coyote_jump_cooldown_ref: cR.coyote_jump_cooldown = cR.coyote_jump_cooldown_ref
+	if cR.has_cut_jump: cR.has_cut_jump = false
+	if cR.movement_dust.emitting: cR.movement_dust.emitting = false
+	
+func update(_delta : float):
+	pass
+	
+func physics_update(delta : float):
+	check_if_floor()
+	
+	cR.gravity_apply(delta)
+	
+	input_management()
+	
+	move(delta)
+	
+func check_if_floor():
+	if !cR.is_on_floor() and !cR.is_on_wall():
+		if cR.velocity.y < 0.0:
+			transitioned.emit(self, \"InairState\")
+			
+	if cR.is_on_floor():
+		if cR.jump_buff_on:
+			#apply jump buffering
+			cR.buffered_jump = true
+			cR.jump_buff_on = false
+			transitioned.emit(self, \"JumpState\")
+			
+func input_management():
+	if Input.is_action_pressed(cR.jumpAction) if cR.auto_jump else Input.is_action_just_pressed(cR.jumpAction) :
+		transitioned.emit(self, \"JumpState\")
+		
+	if Input.is_action_just_pressed(cR.runAction):
+		cR.walk_or_run = \"RunState\"
+		transitioned.emit(self, \"RunState\")
+		
+	if Input.is_action_just_pressed(\"ragdoll\"):
+		if !cR.godot_plush_skin.ragdoll:
+			transitioned.emit(self, \"RagdollState\")
+		
+func move(delta : float):
+	cR.move_dir = Input.get_vector(cR.moveLeftAction, cR.moveRightAction, cR.moveForwardAction, cR.moveBackwardAction).rotated(-cR.cam_holder.global_rotation.y)
+	
+	if cR.move_dir and cR.is_on_floor():
+		#apply smooth move
+		cR.velocity.x = lerp(cR.velocity.x, cR.move_dir.x * cR.move_speed, cR.move_accel * delta)
+		cR.velocity.z = lerp(cR.velocity.z, cR.move_dir.y * cR.move_speed, cR.move_accel * delta)
+	else:
+		transitioned.emit(self, \"IdleState\")
+"
+
+[sub_resource type="GDScript" id="GDScript_65viv"]
+script/source = "extends State
+
+class_name RunState
+
+var state_name : String = \"Run\"
+
+var cR : CharacterBody3D
+
+func enter(char_ref : CharacterBody3D):
+	cR = char_ref
+	
+	verifications()
+	
+func verifications():
+	cR.godot_plush_skin.set_state(\"run\")
+	cR.move_speed = cR.run_speed
+	cR.move_accel = cR.run_accel
+	cR.move_deccel = cR.run_deccel
+	
+	cR.floor_snap_length = 1.0
+	if cR.jump_cooldown > 0.0: cR.jump_cooldown = -1.0
+	if cR.nb_jumps_in_air_allowed < cR.nb_jumps_in_air_allowed_ref: cR.nb_jumps_in_air_allowed = cR.nb_jumps_in_air_allowed_ref
+	if cR.coyote_jump_cooldown < cR.coyote_jump_cooldown_ref: cR.coyote_jump_cooldown = cR.coyote_jump_cooldown_ref
+	if cR.has_cut_jump: cR.has_cut_jump = false
+	if !cR.movement_dust.emitting: cR.movement_dust.emitting = true
+	
+func update(_delta : float):
+	pass
+	
+func physics_update(delta : float):
+	check_if_floor()
+	
+	cR.gravity_apply(delta)
+	
+	input_management()
+	
+	move(delta)
+	
+func check_if_floor():
+	if !cR.is_on_floor():
+		if cR.velocity.y < 0.0:
+			transitioned.emit(self, \"InairState\")
+			
+	if cR.is_on_floor():
+		if cR.jump_buff_on:
+			cR.buffered_jump = true
+			cR.jump_buff_on = false
+			transitioned.emit(self, \"JumpState\")
+			
+func input_management():
+	if Input.is_action_pressed(cR.jumpAction) if cR.auto_jump else Input.is_action_just_pressed(cR.jumpAction) :
+		transitioned.emit(self, \"JumpState\")
+		
+	if cR.continious_run:
+		#has to press run button once to run
+		if Input.is_action_just_pressed(cR.runAction):
+			cR.walk_or_run = \"WalkState\"
+			transitioned.emit(self, \"WalkState\")
+	else:
+		#has to continuously press run button to run
+		if !Input.is_action_pressed(cR.runAction):
+			cR.walk_or_run = \"WalkState\"
+			transitioned.emit(self, \"WalkState\")
+			
+	if Input.is_action_just_pressed(\"ragdoll\"):
+		if !cR.godot_plush_skin.ragdoll:
+			transitioned.emit(self, \"RagdollState\")
+		
+		
+func move(delta : float):
+	cR.move_dir = Input.get_vector(cR.moveLeftAction, cR.moveRightAction, cR.moveForwardAction, cR.moveBackwardAction).rotated(-cR.cam_holder.global_rotation.y)
+	
+	if cR.move_dir and cR.is_on_floor():
+		cR.velocity.x = lerp(cR.velocity.x, cR.move_dir.x * cR.move_speed, cR.move_accel * delta)
+		cR.velocity.z = lerp(cR.velocity.z, cR.move_dir.y * cR.move_speed, cR.move_accel * delta)
+	else:
+		transitioned.emit(self, \"IdleState\")
+"
+
+[sub_resource type="GDScript" id="GDScript_x7c3f"]
+script/source = "extends State
+
+class_name JumpState
+
+var state_name : String = \"Jump\"
+
+var cR : CharacterBody3D
+
+func enter(char_ref : CharacterBody3D):
+	cR = char_ref
+	
+	verifications()
+	
+	jump()
+	
+func verifications():
+	cR.godot_plush_skin.set_state(\"jump\")
+	if cR.floor_snap_length != 0.0:  cR.floor_snap_length = 0.0
+	if cR.jump_cooldown < cR.jump_cooldown_ref: cR.jump_cooldown = cR.jump_cooldown_ref
+	if cR.movement_dust.emitting: cR.movement_dust.emitting = false
+	
+func update(_delta : float):
+	pass
+	
+func physics_update(delta : float):
+	
+	applies(delta)
+	
+	cR.gravity_apply(delta)
+	
+	input_management()
+	
+	check_if_floor()
+	
+	move(delta)
+	
+func applies(delta : float):
+	if !cR.is_on_floor(): 
+		if cR.jump_cooldown > 0.0: cR.jump_cooldown -= delta
+		if cR.coyote_jump_cooldown > 0.0: cR.coyote_jump_cooldown -= delta
+		
+func input_management():
+	if Input.is_action_just_pressed(cR.jumpAction):
+		jump()
+		
+	if Input.is_action_just_released(cR.jumpAction):
+		#cut jump in action, allow to manage jump height 
+		#(the longer you press the button, the more high the play char goes, similar to the Mario Bros games)
+		cR.has_cut_jump = true
+		transitioned.emit(self, \"InairState\")
+		
+	if Input.is_action_just_pressed(\"ragdoll\"):
+		if !cR.godot_plush_skin.ragdoll and !cR.ragdoll_on_floor_only:
+			transitioned.emit(self, \"RagdollState\")
+			
+func check_if_floor():
+	if !cR.is_on_floor() and cR.velocity.y < 0.0:
+		transitioned.emit(self, \"InairState\")
+		
+	if cR.is_on_floor():
+		if cR.move_dir: transitioned.emit(self, cR.walk_or_run)
+		else: transitioned.emit(self, \"IdleState\")
+		
+	if cR.is_on_wall():
+		#if enabled, cut velocity when the play char hit a wall
+		if cR.hit_wall_cut_velocity:
+			cR.velocity.x = 0.0
+			cR.velocity.z = 0.0
+			
+func move(delta : float):
+	cR.move_dir = Input.get_vector(cR.moveLeftAction, cR.moveRightAction, cR.moveForwardAction, cR.moveBackwardAction).rotated(-cR.cam_holder.global_rotation.y)
+	
+	#depending on the previous grounded state (walk or run)
+	#choose corresponding curve, to apply the correct in air values
+	if cR.move_dir and !cR.is_on_floor():
+		var in_air_move_speed_val : float
+		var in_air_accel_val : float
+		if cR.walk_or_run == \"WalkState\":
+			in_air_move_speed_val = cR.in_air_move_speed[0].sample(cR.velocity.length())
+			in_air_accel_val = cR.in_air_accel[0].sample(cR.velocity.length())
+		elif cR.walk_or_run == \"RunState\":
+			in_air_move_speed_val = cR.in_air_move_speed[1].sample(cR.velocity.length())
+			in_air_accel_val = cR.in_air_accel[1].sample(cR.velocity.length())
+			
+		cR.velocity.x = lerp(cR.velocity.x, cR.move_dir.x * in_air_move_speed_val, in_air_accel_val * delta)
+		cR.velocity.z = lerp(cR.velocity.z, cR.move_dir.y * in_air_move_speed_val, in_air_accel_val * delta)
+		
+func jump(): 
+	#manage the jump behaviour, depending of the different variables and states the character is
+	
+	var can_jump : bool = false #jump condition
+	
+	#in air jump
+	if !cR.is_on_floor():
+		if cR.coyote_jump_on:
+			cR.jump_cooldown = cR.jump_cooldown_ref
+			cR.coyote_jump_cooldown = -1.0 #so that the character cannot immediately make another coyote jump
+			cR.coyote_jump_on = false
+			can_jump = true 
+		elif cR.nb_jumps_in_air_allowed > 0:
+			cR.nb_jumps_in_air_allowed -= 1
+			cR.jump_cooldown = cR.jump_cooldown_ref
+			can_jump = true 
+			
+	#on floor jump
+	if cR.is_on_floor():
+		cR.jump_cooldown = cR.jump_cooldown_ref
+		can_jump = true 
+		
+	#jump buffering
+	if cR.buffered_jump:
+		cR.buffered_jump = false
+		cR.nb_jumps_in_air_allowed = cR.nb_jumps_in_air_allowed_ref
+		
+	#apply jump
+	if can_jump:
+		cR.velocity.y = -cR.jump_velocity
+		can_jump = false
+		
+		#play squash and strech effect, and display jump particles
+		if cR.is_on_floor(): 
+			cR.squash_and_strech(1.12, 0.1)
+			cR.particles_manager.display_particles(cR.jump_particles, cR)
+		
+		
+"
+
+[sub_resource type="GDScript" id="GDScript_bjvpn"]
+script/source = "extends State
+
+class_name InairState
+
+var state_name : String = \"Inair\"
+
+var cR : CharacterBody3D
+
+func enter(char_ref : CharacterBody3D):
+	cR = char_ref
+	
+	verifications()
+	
+func verifications():
+	cR.godot_plush_skin.set_state(\"fall\")
+	if cR.floor_snap_length != 0.0:  cR.floor_snap_length = 0.0
+	if cR.movement_dust.emitting: cR.movement_dust.emitting = false
+	
+func update(_delta : float):
+	pass
+	
+func physics_update(delta : float):
+	applies(delta)
+	
+	if cR.velocity.y > 0 and cR.has_cut_jump: gravity_apply(delta)
+	else: cR.gravity_apply(delta)
+	
+	input_management()
+	
+	check_if_floor()
+	
+	move(delta)
+	
+func applies(delta : float):
+	if !cR.is_on_floor(): 
+		if cR.jump_cooldown > 0.0: cR.jump_cooldown -= delta
+		if cR.coyote_jump_cooldown > 0.0: cR.coyote_jump_cooldown -= delta
+		
+func gravity_apply(delta : float):
+	if cR.velocity.y >= 0.0: cR.velocity.y -= cR.jump_gravity / cR.jump_cut_multiplier * delta
+		
+func input_management():
+	if Input.is_action_just_pressed(cR.jumpAction) :
+		#check if can jump buffer
+		if cR.floor_check.is_colliding() and cR.last_frame_position.y > cR.position.y and cR.nb_jumps_in_air_allowed <= 0: cR.jump_buff_on = true
+		#check if can coyote jump
+		if cR.was_on_floor and cR.coyote_jump_cooldown > 0.0 and cR.last_frame_position.y > cR.position.y:
+			cR.coyote_jump_on = true
+			transitioned.emit(self, \"JumpState\")
+		transitioned.emit(self, \"JumpState\")
+		
+	if Input.is_action_just_pressed(\"ragdoll\"):
+		if !cR.godot_plush_skin.ragdoll and !cR.ragdoll_on_floor_only:
+			transitioned.emit(self, \"RagdollState\")
+		
+func check_if_floor():
+	if cR.is_on_floor():
+		if cR.jump_buff_on: 
+			cR.buffered_jump = true
+			cR.jump_buff_on = false
+			transitioned.emit(self, \"JumpState\")
+			
+		cR.squash_and_strech(0.8, 0.08)
+		cR.particles_manager.display_particles(cR.land_particles, cR)
+		
+		impact_audio_playing()
+			
+		if cR.move_dir: transitioned.emit(self, cR.walk_or_run)
+		else: transitioned.emit(self, \"IdleState\")
+		
+	if cR.is_on_wall():
+		if cR.hit_wall_cut_velocity:
+			cR.velocity.x = 0.0
+			cR.velocity.z = 0.0
+		
+func move(delta : float):
+	cR.move_dir = Input.get_vector(cR.moveLeftAction, cR.moveRightAction, cR.moveForwardAction, cR.moveBackwardAction).rotated(-cR.cam_holder.global_rotation.y)
+		
+	if cR.move_dir and !cR.is_on_floor():
+		var in_air_move_speed_val : float
+		var in_air_accel_val : float
+		if cR.walk_or_run == \"WalkState\":
+			in_air_move_speed_val = cR.in_air_move_speed[0].sample(cR.velocity.length())
+			in_air_accel_val = cR.in_air_accel[0].sample(cR.velocity.length())
+		elif cR.walk_or_run == \"RunState\":
+			in_air_move_speed_val = cR.in_air_move_speed[1].sample(cR.velocity.length())
+			in_air_accel_val = cR.in_air_accel[1].sample(cR.velocity.length())
+		
+		cR.velocity.x = lerp(cR.velocity.x, cR.move_dir.x * in_air_move_speed_val, in_air_accel_val * delta)
+		cR.velocity.z = lerp(cR.velocity.z, cR.move_dir.y * in_air_move_speed_val, in_air_accel_val * delta)
+		
+func impact_audio_playing():
+	#audio played when play char touch the ground after being in air
+	#the volume is calculated based on the velocity pre ground hit, plus the fall gravity
+	var floor_impact_percent : float = clamp(abs(cR.velocity.y), 0.0, cR.fall_gravity) / cR.fall_gravity
+	cR.impact_audio.volume_db = linear_to_db(remap(floor_impact_percent, 0.0, 1.0, 0.5, 2.0))
+	cR.impact_audio.play()
+"
+
+[sub_resource type="GDScript" id="GDScript_s7qer"]
+script/source = "extends State
+
+class_name RagdollState
+
+var state_name : String = \"Ragdoll\"
+
+var cR : CharacterBody3D
+
+func enter(char_ref : CharacterBody3D):
+	cR = char_ref
+	
+	apply_ragdoll()
+	
+	verifications()
+	
+func verifications():
+	cR.floor_snap_length = 1.0
+	if cR.jump_cooldown > 0.0: cR.jump_cooldown = -1.0
+	if cR.nb_jumps_in_air_allowed < cR.nb_jumps_in_air_allowed_ref: cR.nb_jumps_in_air_allowed = cR.nb_jumps_in_air_allowed_ref
+	if cR.coyote_jump_cooldown < cR.coyote_jump_cooldown_ref: cR.coyote_jump_cooldown = cR.coyote_jump_cooldown_ref
+	if cR.movement_dust.emitting: cR.movement_dust.emitting = false
+	
+func apply_ragdoll():
+	#set model to ragdoll mode
+	cR.godot_plush_skin.ragdoll = true
+	
+func update(_delta : float):
+	check_if_ragdoll()
+	
+func physics_update(delta : float):
+	gravity_apply(delta)
+	
+	applies()
+	
+	input_management()
+	
+func check_if_ragdoll():
+	if !cR.godot_plush_skin.ragdoll:
+		transitioned.emit(self, \"IdleState\")
+		
+func gravity_apply(delta : float):
+	cR.velocity.y -= cR.ragdoll_gravity * delta #apply distant gravity value to follow the model (if wanted)
+	
+func applies():
+	#have to apply the cut movement apply every frame, otherwise the camera will continue to move
+	cR.velocity.x = 0.0
+	cR.velocity.z = 0.0
+	
+func input_management():
+	if Input.is_action_just_pressed(\"ragdoll\"):
+		#if ragdoll is set to be only enable on floor
+		if cR.ragdoll_on_floor_only and cR.is_on_floor():
+			cR.godot_plush_skin.ragdoll = false
+		#otherwise
+		elif !cR.ragdoll_on_floor_only:
+			cR.godot_plush_skin.ragdoll = false
+	
+"
+
+[sub_resource type="GDScript" id="GDScript_g4c7l"]
+script/source = "extends CanvasLayer
+
+#there won't be any more commentaries for this script, i think the functions are pretty self explanatory
+
+#L stands for \"Label\", LT stands for \"Label Text\"
+@onready var current_state_LT = %CurrentStateLT
+@onready var velocity_LT = %VelocityLT
+@onready var nb_jumps_inAir_allowed_LT = %NbJumpsInAirAllowedLT
+@onready var jump_buffer_LT = %JumpBufferLT
+@onready var coyote_time_LT = %CoyoteTimeLT
+@onready var model_orientation_LT = %ModelOrientationLT
+@onready var camera_mode_LT = %CameraModeLT
+@onready var frames_per_second_LT = %FramesPerSecondLT
+
+func display_curr_state(curr_state : String):
+	current_state_LT.set_text(str(curr_state))
+	
+func display_velocity(velocity : float):
+	velocity_LT.set_text(str(velocity))
+
+func display_nb_jumps_in_air_allowed(nb_jumps : int):
+	nb_jumps_inAir_allowed_LT.set_text(str(nb_jumps))
+	
+func display_jump_buffer(jump_buffer : bool):
+	jump_buffer_LT.set_text(str(jump_buffer if jump_buffer else \"\"))
+	
+func display_coyote_time(coyote_time : float):
+	coyote_time_LT.set_text(str(coyote_time))
+	
+func display_model_orientation(model_orientation : bool):
+	model_orientation_LT.set_text(str(\"cam follower\" if model_orientation else \"independant\"))
+	
+func display_camera_mode(cam_mode : bool):
+	camera_mode_LT.set_text(str(\"aim\" if cam_mode else \"default\"))
+	
+func _process(_delta : float):
+	display_frames_per_second()
+	
+func display_frames_per_second():
+	frames_per_second_LT.set_text(str(Engine.get_frames_per_second()))
+	
+	
+	
+	
+"
+
+[sub_resource type="Gradient" id="Gradient_0teac"]
+offsets = PackedFloat32Array(0.8045198, 0.8745763)
+colors = PackedColorArray(0.24, 0.24, 0.24, 1, 0, 0, 0, 1)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_mebcp"]
+gradient = SubResource("Gradient_0teac")
+width = 256
+height = 28
+fill_from = Vector2(0, 1)
+fill_to = Vector2(0, 1)
+
+[sub_resource type="Gradient" id="Gradient_5qbu3"]
+offsets = PackedFloat32Array(0, 0.002259887, 1)
+colors = PackedColorArray(0, 0, 0, 1, 0.35, 0, 0, 1, 0.35, 0, 0, 1)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_1uovs"]
+gradient = SubResource("Gradient_5qbu3")
+width = 256
+height = 28
+fill_from = Vector2(1, 1)
+fill_to = Vector2(0.5470086, 0.47008547)
+
+[node name="Player" type="CharacterBody3D" unique_id=1164001717]
+collision_mask = 2
+axis_lock_angular_x = true
+axis_lock_angular_y = true
+axis_lock_angular_z = true
+script = SubResource("GDScript_32hag")
+walk_speed = 5.0
+walk_accel = 8.0
+walk_deccel = 7.5
+run_speed = 9.0
+run_accel = 3.5
+run_deccel = 6.5
+jump_height = 3.0
+jump_time_to_peak = 0.35
+jump_time_to_descent = 0.29
+jump_cut_multiplier = 0.5
+jump_cooldown = 0.2
+nb_jumps_in_air_allowed = 1
+coyote_jump_cooldown = 0.2
+in_air_move_speed = Array[Curve]([SubResource("Curve_l1d2p"), SubResource("Curve_pdxi8")])
+in_air_accel = Array[Curve]([SubResource("Curve_8rpwc"), SubResource("Curve_x3fw6")])
+hit_wall_cut_velocity = true
+moveForwardAction = "move_forward"
+moveBackwardAction = "move_backward"
+moveLeftAction = "move_left"
+moveRightAction = "move_right"
+runAction = "run"
+jumpAction = "jump"
+model_rot_speed = 6.5
+ragdoll_gravity = 24.0
+ragdoll_on_floor_only = true
+follow_cam_pos_when_aimed = true
+
+[node name="AudioRoot" type="Node3D" parent="." unique_id=1579285037]
+
+[node name="FootStepAudio" type="AudioStreamPlayer3D" parent="AudioRoot" unique_id=1385047146]
+unique_name_in_owner = true
+stream = SubResource("AudioStreamRandomizer_sxclc")
+max_polyphony = 3
+
+[node name="ImpactAudio" type="AudioStreamPlayer3D" parent="AudioRoot" unique_id=1843300642]
+unique_name_in_owner = true
+stream = SubResource("AudioStreamRandomizer_3vpnr")
+volume_db = 5.0
+max_polyphony = 3
+
+[node name="WaveAudio" type="AudioStreamPlayer3D" parent="AudioRoot" unique_id=1985122778]
+unique_name_in_owner = true
+stream = SubResource("AudioStreamRandomizer_fvg16")
+
+[node name="OrbitView" parent="." unique_id=641243278 instance=ExtResource("5_ebec5")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+collision_mask = 2
+mouse_sens = 0.004
+
+[node name="StateMachine" type="Node" parent="." unique_id=847247392 node_paths=PackedStringArray("initial_state")]
+script = SubResource("GDScript_tqiix")
+initial_state = NodePath("IdleState")
+
+[node name="IdleState" type="Node" parent="StateMachine" unique_id=998455833]
+script = SubResource("GDScript_e7oew")
+metadata/_custom_type_script = "uid://stil4xkf3tk0"
+
+[node name="WalkState" type="Node" parent="StateMachine" unique_id=1726728226]
+script = SubResource("GDScript_c35mf")
+metadata/_custom_type_script = "uid://blt7dest23fk0"
+
+[node name="RunState" type="Node" parent="StateMachine" unique_id=548314700]
+script = SubResource("GDScript_65viv")
+metadata/_custom_type_script = "uid://5gk47o641xgt"
+
+[node name="JumpState" type="Node" parent="StateMachine" unique_id=1153169981]
+script = SubResource("GDScript_x7c3f")
+metadata/_custom_type_script = "uid://dvu58wf01wils"
+
+[node name="InairState" type="Node" parent="StateMachine" unique_id=938665130]
+script = SubResource("GDScript_bjvpn")
+metadata/_custom_type_script = "uid://bh3rdvokmrar1"
+
+[node name="RagdollState" type="Node" parent="StateMachine" unique_id=1149976075]
+script = SubResource("GDScript_s7qer")
+metadata/_custom_type_script = "uid://d2tif6xsjkwnw"
+
+[node name="Raycasts" type="Node3D" parent="." unique_id=2020065069]
+
+[node name="FloorRaycast" type="RayCast3D" parent="Raycasts" unique_id=1903603184]
+unique_name_in_owner = true
+target_position = Vector3(0, -2, 0)
+collision_mask = 2
+
+[node name="DebugHUD" type="CanvasLayer" parent="." unique_id=1035836896]
+unique_name_in_owner = true
+visible = false
+script = SubResource("GDScript_g4c7l")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="DebugHUD" unique_id=1768912201]
+offset_left = 8.0
+offset_top = 5.0
+offset_right = 312.0
+offset_bottom = 171.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="DebugHUD/HBoxContainer" unique_id=1624855417]
+layout_mode = 2
+
+[node name="CurrentStateL" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer" unique_id=2077443174]
+layout_mode = 2
+text = "Current state :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="VelocityL" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer" unique_id=1343634231]
+layout_mode = 2
+text = "Velocity :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="NbJumpsInAirAllowedL" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer" unique_id=250195120]
+layout_mode = 2
+text = "Nb jumps in air allowed :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="JumpBufferL" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer" unique_id=1318790688]
+layout_mode = 2
+text = "Jump buffer :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="CoyoteTimeL" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer" unique_id=492417804]
+layout_mode = 2
+text = "Coyote time :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="VBoxContainer2" type="VBoxContainer" parent="DebugHUD/HBoxContainer" unique_id=1092169558]
+layout_mode = 2
+
+[node name="CurrentStateLT" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer2" unique_id=213758940]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="VelocityLT" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer2" unique_id=1569368810]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="NbJumpsInAirAllowedLT" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer2" unique_id=424201553]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="JumpBufferLT" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer2" unique_id=274221303]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="CoyoteTimeLT" type="Label" parent="DebugHUD/HBoxContainer/VBoxContainer2" unique_id=1770331806]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="DebugHUD" unique_id=692165683]
+offset_left = 920.0
+offset_top = 7.0
+offset_right = 1251.0
+offset_bottom = 105.0
+
+[node name="VBoxContainer3" type="VBoxContainer" parent="DebugHUD/HBoxContainer2" unique_id=1177018071]
+layout_mode = 2
+
+[node name="ModelOrientationL" type="Label" parent="DebugHUD/HBoxContainer2/VBoxContainer3" unique_id=72679498]
+layout_mode = 2
+text = "Model orientation :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="CameraModeL" type="Label" parent="DebugHUD/HBoxContainer2/VBoxContainer3" unique_id=636756298]
+layout_mode = 2
+text = "Camera mode :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="FramesPerSecondL" type="Label" parent="DebugHUD/HBoxContainer2/VBoxContainer3" unique_id=1314011613]
+layout_mode = 2
+text = "Frames per second :"
+label_settings = ExtResource("6_yllr7")
+
+[node name="VBoxContainer4" type="VBoxContainer" parent="DebugHUD/HBoxContainer2" unique_id=284007414]
+layout_mode = 2
+
+[node name="ModelOrientationLT" type="Label" parent="DebugHUD/HBoxContainer2/VBoxContainer4" unique_id=463284791]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="CameraModeLT" type="Label" parent="DebugHUD/HBoxContainer2/VBoxContainer4" unique_id=1132720921]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="FramesPerSecondLT" type="Label" parent="DebugHUD/HBoxContainer2/VBoxContainer4" unique_id=1840787198]
+unique_name_in_owner = true
+layout_mode = 2
+text = "....."
+label_settings = ExtResource("6_yllr7")
+
+[node name="GUI" type="CanvasLayer" parent="." unique_id=763805944]
+
+[node name="Control" type="Control" parent="GUI" unique_id=431688856]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="MarginContainer" type="MarginContainer" parent="GUI/Control" unique_id=103293537]
+layout_mode = 0
+offset_right = 314.0
+offset_bottom = 65.0
+
+[node name="HealthBar" type="TextureProgressBar" parent="GUI/Control/MarginContainer" unique_id=541958200 node_paths=PackedStringArray("health_system")]
+layout_mode = 2
+size_flags_horizontal = 8
+size_flags_vertical = 8
+texture_under = SubResource("GradientTexture2D_mebcp")
+texture_progress = SubResource("GradientTexture2D_1uovs")
+script = ExtResource("7_kb6p2")
+health_system = NodePath("../../../../HealthSystem")
+metadata/_custom_type_script = "uid://k72i4psbchtv"
+
+[node name="HealthSystem" type="Node" parent="." unique_id=635001675]
+script = ExtResource("8_wodsf")
+metadata/_custom_type_script = "uid://diasmms0w51ia"
