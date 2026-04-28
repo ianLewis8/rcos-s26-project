@@ -1,0 +1,179 @@
+[gd_scene format=3 uid="uid://ckfsuo3a2c3ma"]
+
+[ext_resource type="Script" uid="uid://bnqqra02lf0qv" path="res://addons/debug/debug.gd" id="1_4t4r1"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_vfkfk"]
+bg_color = Color(1, 0.18039215, 0.50695467, 0.4745098)
+
+[sub_resource type="GDScript" id="GDScript_tpj24"]
+script/source = "extends RichTextLabel
+
+const UPDATE_INTERVAL: float = 0.1
+const THRESHOLD_WARNING: float = 0.8 # Ratio of target FPS
+const THRESHOLD_DANGER: float = 0.3
+
+var time_passed: float = 0.0
+var fps: float = 0.
+
+
+func _ready() -> void:
+	set_process(Helper.IsDebugBuild)
+
+
+func _process(delta: float) -> void:
+	time_passed += delta
+
+	if time_passed >= UPDATE_INTERVAL:
+		fps = Engine.get_frames_per_second()
+		text = \"%d/%d[font_size=10]FPS[/font_size]\" % [fps, DisplayServer.screen_get_refresh_rate()]
+
+		if fps < THRESHOLD_DANGER * DisplayServer.screen_get_refresh_rate():
+			self_modulate = Color.RED
+		elif fps < THRESHOLD_WARNING * DisplayServer.screen_get_refresh_rate():
+			self_modulate = Color.YELLOW
+		else:
+			self_modulate = Color.GREEN
+
+		time_passed = 0.0
+"
+
+[node name="Debug" type="CanvasLayer" unique_id=994938689]
+layer = 9
+script = ExtResource("1_4t4r1")
+
+[node name="Control" type="Control" parent="." unique_id=1809100660]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Control" unique_id=1457611388]
+layout_mode = 1
+anchors_preset = -1
+anchor_right = 1.0
+anchor_bottom = 0.20300001
+offset_left = 7.0
+offset_top = 9.0
+offset_right = -7.0
+offset_bottom = 40.039993
+grow_horizontal = 2
+
+[node name="MenuButton" type="MenuButton" parent="Control/HBoxContainer" unique_id=1221043076]
+layout_mode = 2
+size_flags_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 27
+theme_override_styles/normal = SubResource("StyleBoxFlat_vfkfk")
+text = "D [F1]"
+flat = false
+switch_on_hover = true
+item_count = 12
+popup/item_0/text = "Time Scale"
+popup/item_0/id = 0
+popup/item_0/separator = true
+popup/item_1/text = "Increase +"
+popup/item_1/id = 1
+popup/item_2/text = "Decrease"
+popup/item_2/id = 2
+popup/item_3/text = "Reset"
+popup/item_3/id = 3
+popup/item_4/text = "Levels"
+popup/item_4/id = 4
+popup/item_4/separator = true
+popup/item_5/text = "Generate Level"
+popup/item_5/id = 5
+popup/item_6/text = "Data"
+popup/item_6/id = 6
+popup/item_6/separator = true
+popup/item_7/text = "Reset Player Data"
+popup/item_7/id = 7
+popup/item_8/text = "Scene"
+popup/item_8/id = 8
+popup/item_8/separator = true
+popup/item_9/text = "Reload"
+popup/item_9/id = 9
+popup/item_10/text = "Misc"
+popup/item_10/id = 10
+popup/item_10/separator = true
+popup/item_11/text = "Toggle Live Info"
+popup/item_11/id = 11
+metadata/_edit_use_anchors_ = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Control/HBoxContainer" unique_id=1106814607]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_constants/separation = -4
+metadata/_edit_use_anchors_ = true
+
+[node name="FPS Counter" type="RichTextLabel" parent="Control/HBoxContainer/VBoxContainer" unique_id=6505353]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/outline_size = 6
+bbcode_enabled = true
+text = "? FPS"
+fit_content = true
+script = SubResource("GDScript_tpj24")
+metadata/_edit_use_anchors_ = true
+
+[node name="LabelLive" type="RichTextLabel" parent="Control/HBoxContainer/VBoxContainer" unique_id=111876095]
+modulate = Color(1, 1, 1, 0.5803922)
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/outline_size = 6
+bbcode_enabled = true
+text = "Live Labels
+Test: 1
+
+"
+fit_content = true
+metadata/_edit_use_anchors_ = true
+
+[node name="UpdateLabelLiveTimer" type="Timer" parent="Control/HBoxContainer/VBoxContainer/LabelLive" unique_id=874052793]
+wait_time = 0.1
+autostart = true
+
+[node name="Crosshair" type="Control" parent="Control" unique_id=1779366918]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+metadata/_edit_use_anchors_ = true
+metadata/_edit_lock_ = true
+
+[node name="ColorRect" type="ColorRect" parent="Control/Crosshair" unique_id=570358278]
+layout_mode = 1
+anchors_preset = 13
+anchor_left = 0.5
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -1.0
+offset_right = 1.0
+offset_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 1, 0.259375, 0.19)
+
+[node name="ColorRect2" type="ColorRect" parent="Control/Crosshair" unique_id=2117845365]
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 0.526852
+anchor_right = 1.0
+anchor_bottom = 0.528704
+grow_horizontal = 2
+grow_vertical = 2
+pivot_offset = Vector2(0, 960)
+mouse_filter = 2
+color = Color(0, 1, 0.259375, 0.19)
+metadata/_edit_use_anchors_ = true
+
+[connection signal="resized" from="Control" to="." method="_on_control_resized"]
+[connection signal="timeout" from="Control/HBoxContainer/VBoxContainer/LabelLive/UpdateLabelLiveTimer" to="." method="_on_update_label_live_timer_timeout"]
